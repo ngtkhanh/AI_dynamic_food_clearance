@@ -9,14 +9,13 @@ import {
   Zap, 
   Sparkles, 
   Clock, 
-  Tag, 
   AlertCircle, 
   PackageOpen, 
   RefreshCw, 
   Check, 
   X,
   Layers,
-  ArrowRight
+  Wand2
 } from 'lucide-react';
 
 const fetcher = (url: string) => fetch(url).then(res => res.json());
@@ -31,6 +30,21 @@ const CATEGORIES = [
   'Khác'
 ];
 
+// Helper: Chuyển đổi tổng số giờ sang định dạng "X tháng Y ngày Z giờ"
+function formatShelfLife(totalHours: number): string {
+  if (!totalHours || totalHours <= 0) return '24 giờ';
+  const months = Math.floor(totalHours / 720); // 30 ngày = 720 giờ
+  const remainingAfterMonths = totalHours % 720;
+  const days = Math.floor(remainingAfterMonths / 24);
+  const hours = remainingAfterMonths % 24;
+
+  const parts: string[] = [];
+  if (months > 0) parts.push(`${months} tháng`);
+  if (days > 0) parts.push(`${days} ngày`);
+  if (hours > 0) parts.push(`${hours} giờ`);
+  return parts.length > 0 ? parts.join(' ') : `${totalHours} giờ`;
+}
+
 export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: () => void }) {
   const { data: response, error, isLoading, mutate } = useSWR('/api/products', fetcher);
   const products = response?.data || [];
@@ -38,6 +52,7 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
   // Form State
   const [showForm, setShowForm] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGeneratingKeywords, setIsGeneratingKeywords] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
 
@@ -45,9 +60,16 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
   const [category, setCategory] = useState('Bakery');
   const [basePrice, setBasePrice] = useState<number | ''>('');
   const [minPrice, setMinPrice] = useState<number | ''>('');
-  const [shelfHours, setShelfHours] = useState<number>(24);
+  
+  // Thời hạn chuẩn chia thành Ngày và Giờ
+  const [shelfDays, setShelfDays] = useState<number>(1);
+  const [shelfHours, setShelfHours] = useState<number>(0);
+  
   const [visualKeywords, setVisualKeywords] = useState('');
   const [sampleImage, setSampleImage] = useState<string | null>(null);
+
+  // Track ảnh bị lỗi load
+  const [brokenImages, setBrokenImages] = useState<Record<number, boolean>>({});
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -56,6 +78,39 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
   const [quickQuantity, setQuickQuantity] = useState<number>(5);
   const [quickHours, setQuickHours] = useState<number>(3);
   const [isPublishingClearance, setIsPublishingClearance] = useState(false);
+
+  // Tính tổng số giờ hạn dùng từ Days + Hours
+  const totalShelfHours = Math.max(1, (shelfDays * 24) + shelfHours);
+
+  // Điểm 3: Tự động gọi AI Gemini để sinh gợi ý từ khóa thị giác
+  const handleAutoGenerateKeywords = async () => {
+    if (!name.trim()) {
+      setFormError('Vui lòng nhập tên món ăn trước khi yêu cầu AI gợi ý.');
+      return;
+    }
+
+    setIsGeneratingKeywords(true);
+    setFormError(null);
+
+    try {
+      const res = await fetch('/api/ai/suggest-keywords', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim(), category })
+      });
+
+      const result = await res.json();
+      if (result.success && result.data?.keywords) {
+        setVisualKeywords(result.data.keywords);
+      } else {
+        throw new Error(result.error || 'AI không phản hồi');
+      }
+    } catch (err: any) {
+      setFormError(err.message || 'Không thể tạo gợi ý từ khóa bằng AI');
+    } finally {
+      setIsGeneratingKeywords(false);
+    }
+  };
 
   // Handle Photo Capture for Sample Image
   const handlePhotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -109,7 +164,7 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
           category,
           basePrice: numBase,
           minPrice: numMin,
-          defaultShelfHours: shelfHours,
+          defaultShelfHours: totalShelfHours,
           visualKeywords: visualKeywords.trim(),
           sampleImages: sampleImage ? [sampleImage] : []
         })
@@ -126,6 +181,8 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
       setName('');
       setBasePrice('');
       setMinPrice('');
+      setShelfDays(1);
+      setShelfHours(0);
       setVisualKeywords('');
       setSampleImage(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -233,13 +290,14 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
           </p>
         </div>
 
+        {/* Điểm 1: Đã sửa, chỉ giữ 1 dấu + qua icon */}
         <button 
           onClick={() => setShowForm(!showForm)}
           className="btn-primary"
           style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1.2rem', fontSize: '0.95rem' }}
         >
           {showForm ? <X size={18} /> : <Plus size={18} />}
-          {showForm ? 'Đóng Form' : '+ Thêm Sản Phẩm Mới'}
+          {showForm ? 'Đóng Form' : 'Thêm Sản Phẩm Mới'}
         </button>
       </div>
 
@@ -338,35 +396,86 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
                 />
               </div>
 
-              {/* Thời hạn sử dụng mặc định */}
-              <div>
+              {/* Điểm 2: Thời hạn chuẩn dạng Ngày / Giờ */}
+              <div style={{ gridColumn: 'span 2' }}>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '0.4rem' }}>
-                  Thời hạn chuẩn (Giờ)
+                  Thời hạn sử dụng chuẩn (Tháng / Ngày / Giờ)
                 </label>
-                <input 
-                  type="number"
-                  placeholder="24"
-                  value={shelfHours}
-                  onChange={e => setShelfHours(Number(e.target.value) || 24)}
-                  style={{ width: '100%', padding: '0.7rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
-                />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.8rem', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <input 
+                        type="number"
+                        min="0"
+                        value={shelfDays}
+                        onChange={e => setShelfDays(Math.max(0, parseInt(e.target.value) || 0))}
+                        style={{ width: '100%', padding: '0.7rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
+                      />
+                      <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>Ngày</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <input 
+                        type="number"
+                        min="0"
+                        max="23"
+                        value={shelfHours}
+                        onChange={e => setShelfHours(Math.max(0, Math.min(23, parseInt(e.target.value) || 0)))}
+                        style={{ width: '100%', padding: '0.7rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
+                      />
+                      <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>Giờ</span>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ marginTop: '0.3rem', fontSize: '0.75rem', color: 'var(--color-primary-light)' }}>
+                  ⏳ Thời hạn quy đổi: <strong>{formatShelfLife(totalShelfHours)}</strong> ({totalShelfHours} giờ)
+                </div>
               </div>
             </div>
 
-            {/* Từ khóa thị giác cho AI */}
+            {/* Điểm 3: Tự động AI gợi ý đặc điểm nhận diện */}
             <div style={{ marginBottom: '1.2rem' }}>
-              <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '0.4rem' }}>
-                Đặc điểm nhận diện cho AI Vision (Keywords & Visual Clues)
-              </label>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                <label style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', margin: 0 }}>
+                  Đặc điểm nhận diện cho AI Vision (Keywords & Visual Clues)
+                </label>
+
+                <button
+                  type="button"
+                  onClick={handleAutoGenerateKeywords}
+                  disabled={isGeneratingKeywords || !name.trim()}
+                  style={{
+                    background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                    color: 'white',
+                    border: 'none',
+                    padding: '0.35rem 0.8rem',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
+                    cursor: (!name.trim() || isGeneratingKeywords) ? 'not-allowed' : 'pointer',
+                    opacity: (!name.trim() || isGeneratingKeywords) ? 0.6 : 1,
+                    boxShadow: '0 2px 6px rgba(99, 102, 241, 0.3)'
+                  }}
+                >
+                  <Wand2 size={13} className={isGeneratingKeywords ? 'animate-spin' : ''} />
+                  {isGeneratingKeywords ? 'AI đang phân tích...' : '✨ AI Tự Điền Đặc Điểm'}
+                </button>
+              </div>
+
               <input 
                 type="text"
-                placeholder="VD: màu vàng nâu óng, vỏ rắc lá mùi tây khô, hình tròn cắt múi cau..."
+                placeholder="Nhập tên món rồi bấm '✨ AI Tự Điền Đặc Điểm' để Gemini tự động mô tả..."
                 value={visualKeywords}
                 onChange={e => setVisualKeywords(e.target.value)}
                 style={{ width: '100%', padding: '0.7rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
               />
               <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-                💡 Càng miêu tả chi tiết hình dáng, màu sắc, bao bì thì Gemini Vision nhận diện ngoài đời càng chính xác.
+                💡 Không cần tự nghĩ: Chỉ cần nhập Tên món, bấm nút màu tím để AI tự viết đặc điểm nhận diện chuẩn xác nhất.
               </span>
             </div>
 
@@ -474,7 +583,7 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
             Bạn chưa thêm mặt hàng nào vào Database. Hãy thêm mặt hàng đầu tiên để kích hoạt tính năng nhận diện AI!
           </p>
           <button onClick={() => setShowForm(true)} className="btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Plus size={16} /> + Thêm sản phẩm đầu tiên
+            <Plus size={16} /> Thêm sản phẩm đầu tiên
           </button>
         </div>
       )}
@@ -491,6 +600,8 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
               sampleImg = product.sampleImages;
             }
 
+            const isBroken = brokenImages[product.id];
+
             return (
               <div 
                 key={product.id} 
@@ -505,10 +616,15 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
                 }}
               >
                 <div>
-                  {/* Image & Badge */}
+                  {/* Image & Badge - Điểm 4: Xử lý hiển thị ảnh an toàn có fallback */}
                   <div style={{ position: 'relative', height: '140px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', overflow: 'hidden', marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {sampleImg ? (
-                      <img src={sampleImg} alt={product.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    {sampleImg && !isBroken ? (
+                      <img 
+                        src={sampleImg} 
+                        alt={product.name} 
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                        onError={() => setBrokenImages(prev => ({ ...prev, [product.id]: true }))}
+                      />
                     ) : (
                       <div style={{ textAlign: 'center', color: 'var(--color-text-muted)' }}>
                         <Camera size={28} style={{ margin: '0 auto 0.3rem', opacity: 0.5 }} />
@@ -553,9 +669,10 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
                     </div>
                   )}
 
+                  {/* Điểm 2: Format thời hạn chuẩn theo Ngày / Giờ thân thiện */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
                     <Clock size={13} />
-                    <span>Hạn chuẩn: {product.defaultShelfHours || 24}h</span>
+                    <span>Hạn chuẩn: <strong>{formatShelfLife(product.defaultShelfHours)}</strong></span>
                   </div>
                 </div>
 

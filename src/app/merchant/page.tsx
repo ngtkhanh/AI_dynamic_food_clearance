@@ -214,17 +214,52 @@ export default function MerchantPage() {
                 </div>
               )}
 
-              {aiResult && !isScanning && (
-                <div style={{ background: 'var(--color-surface)', padding: '1.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
-                  <h3 style={{ color: 'var(--color-primary-light)', marginBottom: '1rem' }}>✅ AI Phân tích thành công</h3>
-                  
-                  {uploadedImage && (
-                    <div style={{ marginBottom: '1rem', textAlign: 'center' }}>
-                      <img src={uploadedImage} alt="Scanned item" style={{ maxWidth: '100%', maxHeight: '200px', borderRadius: 'var(--radius-sm)', objectFit: 'cover' }} />
-                    </div>
-                  )}
+              {aiResult && !isScanning && (() => {
+                const matchedProduct = catalogData?.data?.find((p: any) => p.id === aiResult.productId);
+                let catalogImg: string | null = null;
+                if (matchedProduct?.sampleImages) {
+                  try {
+                    const parsed = JSON.parse(matchedProduct.sampleImages);
+                    if (Array.isArray(parsed) && parsed.length > 0) catalogImg = parsed[0];
+                    else catalogImg = matchedProduct.sampleImages;
+                  } catch {
+                    catalogImg = matchedProduct.sampleImages;
+                  }
+                }
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1rem' }}>
+                return (
+                  <div style={{ background: 'var(--color-surface)', padding: '1.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
+                    <h3 style={{ color: 'var(--color-primary-light)', marginBottom: '1rem' }}>✅ AI Phân tích thành công</h3>
+                    
+                    {/* KHỐI ẢNH ĐỐI CHIẾU: ẢNH CATALOG (TRONG DB) vs ẢNH CHỤP THỰC TẾ (LÊN STOREFRONT) */}
+                    <div style={{ marginBottom: '1.2rem', display: 'grid', gridTemplateColumns: uploadedImage ? '1fr 1fr' : '1fr', gap: '0.8rem' }}>
+                      {/* Ảnh trong Database */}
+                      <div style={{ position: 'relative', height: '140px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '2px solid var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {catalogImg ? (
+                          <img src={catalogImg} alt="Catalog DB" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        ) : (
+                          <div style={{ textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.75rem', padding: '0.5rem' }}>
+                            <Camera size={20} style={{ margin: '0 auto 0.2rem', opacity: 0.5 }} />
+                            <span>Chưa có ảnh trong DB</span>
+                          </div>
+                        )}
+                        <span style={{ position: 'absolute', bottom: '6px', left: '6px', right: '6px', background: 'rgba(15, 23, 42, 0.9)', color: 'var(--color-primary-light)', fontSize: '0.7rem', fontWeight: 600, padding: '0.2rem 0.4rem', borderRadius: 'var(--radius-sm)', textAlign: 'center', border: '1px solid rgba(255,255,255,0.1)' }}>
+                          📦 Ảnh mẫu Catalog (Trong DB)
+                        </span>
+                      </div>
+
+                      {/* Ảnh chụp thực tế sẽ lên Storefront */}
+                      {uploadedImage && (
+                        <div style={{ position: 'relative', height: '140px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px dashed var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <img src={uploadedImage} alt="Real Scanned" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          <span style={{ position: 'absolute', bottom: '6px', left: '6px', right: '6px', background: 'rgba(0, 0, 0, 0.85)', color: '#cbd5e1', fontSize: '0.7rem', padding: '0.2rem 0.4rem', borderRadius: 'var(--radius-sm)', textAlign: 'center', border: '1px solid rgba(255,255,255,0.1)' }}>
+                            📸 Ảnh thực tế (Lên Storefront)
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1rem' }}>
                     <div>
                       <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '0.3rem' }}>Sản phẩm (Khớp với Catalog)</label>
                       <select 
@@ -289,7 +324,8 @@ export default function MerchantPage() {
                     <UploadCloud size={18} /> Push to Storefront
                   </button>
                 </div>
-              )}
+              );
+            })()}
             </section>
 
             {/* RIGHT COL: ACTIVE INVENTORY */}
