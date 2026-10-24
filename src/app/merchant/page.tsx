@@ -60,6 +60,18 @@ export default function MerchantPage() {
   const handlePublish = async () => {
     if (!aiResult) return;
     
+    // Tìm sản phẩm tương ứng trong catalog
+    const matched = catalogData?.data?.find((p: any) => 
+      p.id === aiResult.productId || p.name?.toLowerCase() === aiResult.item_name?.toLowerCase()
+    );
+    const availableStock = matched?.stockQuantity ?? 0;
+    const requestedQty = parseInt(aiResult.quantity) || 1;
+
+    if (matched && requestedQty > availableStock) {
+      alert(`Số lượng xả kho (${requestedQty}) vượt quá số lượng hàng có trong kho (${availableStock})!`);
+      return;
+    }
+    
     // Override the lowest price in the decay schedule
     const finalDecaySchedule = [...(aiResult.decay_schedule || [])];
     if (finalDecaySchedule.length > 0) {
@@ -67,28 +79,53 @@ export default function MerchantPage() {
       finalDecaySchedule[finalDecaySchedule.length - 1].price = aiResult.min_price;
     }
 
-    await fetch('/api/items', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: aiResult.item_name,
-        quantity: aiResult.quantity,
-        originalPrice: aiResult.base_price,
-        imageUrl: uploadedImage,
-        aiPricingStrategy: { decay_schedule: finalDecaySchedule },
-        aiRationale: aiResult.ai_rationale
-      })
-    });
+    try {
+      const res = await fetch('/api/items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          productId: matched?.id || aiResult.productId || null,
+          name: aiResult.item_name,
+          quantity: requestedQty,
+          originalPrice: aiResult.base_price,
+          imageUrl: uploadedImage,
+          aiPricingStrategy: { decay_schedule: finalDecaySchedule },
+          aiRationale: aiResult.ai_rationale
+        })
+      });
 
-    setAiResult(null);
-    setUploadedImage(null);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-    mutate(); // Refresh list
+      const resData = await res.json();
+      if (!res.ok || !resData.success) {
+        alert(resData.error || 'Lỗi khi đưa lên Storefront');
+        return;
+      }
+
+      setAiResult(null);
+      setUploadedImage(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      mutate(); // Làm mới danh sách kệ xả kho
+      mutateCatalog(); // Làm mới số lượng tồn kho trong Master Catalog
+      alert(`Đã đưa ${requestedQty} phần "${aiResult.item_name}" lên Storefront thành công! Tồn kho đã được trừ tương ứng.`);
+    } catch (err: any) {
+      alert('Lỗi kết nối khi xả kho: ' + err.message);
+    }
   };
 
   const handleStop = async (id: number) => {
-    await fetch(`/api/items/${id}`, { method: 'DELETE' });
-    mutate(); // Refresh list immediately
+    if (!confirm('Bạn có chắc chắn muốn dừng đợt xả kho này? Số lượng chưa bán sẽ được hoàn trả về Kho.')) return;
+    try {
+      const res = await fetch(`/api/items/${id}`, { method: 'DELETE' });
+      const resData = await res.json();
+      if (res.ok) {
+        mutate(); // Làm mới kệ xả kho
+        mutateCatalog(); // Làm mới số lượng kho
+        alert(resData.message || 'Đã dừng xả kho và hoàn trả hàng về kho thành công!');
+      } else {
+        alert(resData.error || 'Không thể dừng xả kho');
+      }
+    } catch (err) {
+      alert('Lỗi kết nối khi dừng xả kho');
+    }
   };
 
   const handleOrderAction = async (id: number, action: 'COMPLETED' | 'CANCELLED') => {
@@ -215,7 +252,13 @@ export default function MerchantPage() {
               )}
 
               {aiResult && !isScanning && (() => {
-                const matchedProduct = catalogData?.data?.find((p: any) => p.id === aiResult.productId);
+                const matchedProduct = catalogData?.data?.find((p: any) => 
+                  p.id === aiResult.productId || p.name?.toLowerCase() === aiResult.item_name?.toLowerCase()
+                );
+                const availableStock = matchedProduct?.stockQuantity ?? 0;
+                const isOverStock = availableStock > 0 ? (aiResult.quantity > availableStock) : false;
+                const isOutOfStock = availableStock <= 0;
+
                 let catalogImg: string | null = null;
                 if (matchedProduct?.sampleImages) {
                   try {
@@ -263,7 +306,7 @@ export default function MerchantPage() {
                     <div>
                       <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '0.3rem' }}>Sản phẩm (Khớp với Catalog)</label>
                       <select 
-                        value={aiResult.productId || ''} 
+                        value={aiResult.productId || matchedProduct?.id || ''} 
                         onChange={e => {
                           const selectedId = parseInt(e.target.value);
                           const selectedProduct = catalogData?.data?.find((p: any) => p.id === selectedId);
@@ -273,7 +316,8 @@ export default function MerchantPage() {
                               productId: selectedProduct.id,
                               item_name: selectedProduct.name,
                               base_price: selectedProduct.basePrice,
-                              min_price: selectedProduct.minPrice
+                              min_price: selectedProduct.minPrice,
+                              quantity: Math.min(aiResult.quantity || 1, Math.max(1, selectedProduct.stockQuantity || 1))
                             });
                           }
                         }}
@@ -281,19 +325,43 @@ export default function MerchantPage() {
                       >
                         <option value="" disabled>-- Chọn sản phẩm --</option>
                         {catalogData?.data?.map((p: any) => (
-                          <option key={p.id} value={p.id}>{p.name} (Gốc: {p.basePrice}đ)</option>
+                          <option key={p.id} value={p.id}>{p.name} (Kho: {p.stockQuantity} | Gốc: {p.basePrice}đ)</option>
                         ))}
                       </select>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
                       <div>
-                        <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '0.3rem' }}>Số lượng</label>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                          <label style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', margin: 0 }}>Số lượng xả</label>
+                          <span style={{ fontSize: '0.72rem', color: isOutOfStock ? '#f87171' : '#60a5fa', fontWeight: 600 }}>
+                            Kho: {availableStock}
+                          </span>
+                        </div>
                         <input 
                           type="number" 
+                          min="1"
+                          max={availableStock > 0 ? availableStock : 1}
                           value={aiResult.quantity} 
                           onChange={e => setAiResult({...aiResult, quantity: parseInt(e.target.value) || 0})}
-                          style={{ width: '100%', padding: '0.5rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
+                          style={{ 
+                            width: '100%', 
+                            padding: '0.5rem', 
+                            borderRadius: 'var(--radius-sm)', 
+                            border: `1px solid ${isOverStock || isOutOfStock ? 'var(--color-error)' : 'var(--color-border)'}`, 
+                            background: 'var(--color-bg)', 
+                            color: 'white' 
+                          }}
                         />
+                        {isOutOfStock && (
+                          <p style={{ color: '#fca5a5', fontSize: '0.7rem', margin: '0.2rem 0 0' }}>
+                            ⚠️ Hết hàng trong kho (0).
+                          </p>
+                        )}
+                        {!isOutOfStock && isOverStock && (
+                          <p style={{ color: '#fca5a5', fontSize: '0.7rem', margin: '0.2rem 0 0' }}>
+                            ⚠️ Tối đa có thể xả: {availableStock}.
+                          </p>
+                        )}
                       </div>
                       <div>
                         <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '0.3rem' }}>Giá gốc (VNĐ)</label>
@@ -320,7 +388,20 @@ export default function MerchantPage() {
                     <p style={{ fontSize: '0.9rem', fontStyle: 'italic' }}>"{aiResult.ai_rationale}"</p>
                   </div>
 
-                  <button className="btn-primary" onClick={handlePublish} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+                  <button 
+                    className="btn-primary" 
+                    onClick={handlePublish} 
+                    disabled={isOutOfStock || isOverStock}
+                    style={{ 
+                      width: '100%', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center', 
+                      gap: '0.5rem',
+                      opacity: (isOutOfStock || isOverStock) ? 0.5 : 1,
+                      cursor: (isOutOfStock || isOverStock) ? 'not-allowed' : 'pointer'
+                    }}
+                  >
                     <UploadCloud size={18} /> Push to Storefront
                   </button>
                 </div>
@@ -334,20 +415,61 @@ export default function MerchantPage() {
               <p style={{ marginBottom: '1.5rem', color: 'var(--color-text-secondary)' }}>Items currently on the storefront</p>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {itemsData?.data?.map((item: any) => (
-                  <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem', background: 'var(--color-surface)', borderRadius: 'var(--radius-md)' }}>
-                    <div>
-                      <h4 style={{ margin: 0 }}>{item.name}</h4>
-                      <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Kho: {item.currentQuantity} | Gốc: {item.originalPrice}đ</span>
+                {itemsData?.data?.map((item: any) => {
+                  const catalogProd = item.product || catalogData?.data?.find((p: any) => p.id === item.productId || p.name?.toLowerCase() === item.name?.toLowerCase());
+                  const stockQty = catalogProd?.stockQuantity ?? 0;
+
+                  return (
+                    <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem', background: 'var(--color-surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
+                      <div>
+                        <h4 style={{ margin: 0, fontSize: '1rem', color: 'var(--color-text-primary)' }}>{item.name}</h4>
+                        
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginTop: '0.4rem', alignItems: 'center' }}>
+                          {/* Số lượng đang xả trên kệ Storefront */}
+                          <span style={{ 
+                            background: 'rgba(16, 185, 129, 0.15)', 
+                            color: 'var(--color-primary-light)', 
+                            border: '1px solid var(--color-primary-dark)', 
+                            padding: '0.15rem 0.5rem', 
+                            borderRadius: 'var(--radius-sm)', 
+                            fontSize: '0.75rem', 
+                            fontWeight: 600,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.3rem'
+                          }}>
+                            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--color-primary)' }} />
+                            Đang xả: <strong>{item.currentQuantity}</strong> phần
+                          </span>
+
+                          {/* Số lượng tồn kho còn lại */}
+                          <span style={{ 
+                            background: stockQty > 0 ? 'rgba(59, 130, 246, 0.15)' : 'rgba(239, 68, 68, 0.15)', 
+                            color: stockQty > 0 ? '#60a5fa' : '#f87171', 
+                            border: `1px solid ${stockQty > 0 ? 'rgba(59, 130, 246, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`, 
+                            padding: '0.15rem 0.5rem', 
+                            borderRadius: 'var(--radius-sm)', 
+                            fontSize: '0.75rem',
+                            fontWeight: 500
+                          }}>
+                            📦 Kho: <strong>{stockQty}</strong>
+                          </span>
+
+                          <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                            Gốc: {item.originalPrice.toLocaleString('vi-VN')}đ
+                          </span>
+                        </div>
+                      </div>
+
+                      <button 
+                        onClick={() => handleStop(item.id)}
+                        style={{ background: 'var(--color-error)', color: 'white', padding: '0.45rem 0.85rem', borderRadius: 'var(--radius-sm)', fontSize: '0.82rem', whiteSpace: 'nowrap' }}
+                      >
+                        Dừng xả kho
+                      </button>
                     </div>
-                    <button 
-                      onClick={() => handleStop(item.id)}
-                      style={{ background: 'var(--color-error)', color: 'white', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem' }}
-                    >
-                      Dừng xả kho
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
                 {!itemsData?.data?.length && <p style={{ color: 'var(--color-text-muted)' }}>Kho trống.</p>}
               </div>
             </section>

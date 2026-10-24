@@ -366,6 +366,17 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
   // Đưa lên xả kho nhanh
   const handleLaunchClearance = async () => {
     if (!quickClearanceProduct) return;
+
+    const availableStock = quickClearanceProduct.stockQuantity ?? 0;
+    if (availableStock <= 0) {
+      alert('Sản phẩm này đã hết hàng trong kho, không thể xả kho!');
+      return;
+    }
+    if (quickQuantity > availableStock) {
+      alert(`Số lượng xả kho (${quickQuantity}) vượt quá số lượng hàng có trong kho (${availableStock})!`);
+      return;
+    }
+
     setIsPublishingClearance(true);
 
     try {
@@ -405,26 +416,18 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
         })
       });
 
-      if (res.ok) {
-        // Tự động cập nhật giảm số lượng tồn kho trong Master Catalog
-        if (quickClearanceProduct.id && typeof quickClearanceProduct.stockQuantity === 'number') {
-          const newStock = Math.max(0, quickClearanceProduct.stockQuantity - quickQuantity);
-          await fetch(`/api/products/${quickClearanceProduct.id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ stockQuantity: newStock })
-          }).catch(err => console.error('Lỗi cập nhật tồn kho:', err));
-        }
+      const resData = await res.json();
 
+      if (res.ok && resData.success) {
         setQuickClearanceProduct(null);
         mutate();
         if (onRefreshParent) onRefreshParent();
-        alert(`Đã đưa ${quickQuantity} phần "${quickClearanceProduct.name}" lên Storefront thành công!`);
+        alert(`Đã đưa ${quickQuantity} phần "${quickClearanceProduct.name}" lên Storefront thành công! Tồn kho đã được trừ tương ứng.`);
       } else {
-        alert('Lỗi khi đưa lên xả kho.');
+        alert(resData.error || 'Lỗi khi đưa lên xả kho.');
       }
-    } catch (err) {
-      alert('Lỗi kết nối khi tạo đợt xả kho.');
+    } catch (err: any) {
+      alert('Lỗi kết nối khi tạo đợt xả kho: ' + err.message);
     } finally {
       setIsPublishingClearance(false);
     }
@@ -1156,11 +1159,12 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
 
             <div style={{ marginBottom: '1rem' }}>
               <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '0.3rem' }}>
-                Số lượng đưa lên kệ xả kho
+                Số lượng đưa lên kệ xả kho (Tối đa: {quickClearanceProduct.stockQuantity ?? 0})
               </label>
               <input 
                 type="number"
                 min="1"
+                max={Math.max(1, quickClearanceProduct.stockQuantity ?? 1)}
                 value={quickQuantity}
                 onChange={e => setQuickQuantity(Math.max(1, parseInt(e.target.value) || 1))}
                 style={{ width: '100%', padding: '0.7rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
@@ -1199,9 +1203,17 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
 
               <button 
                 onClick={handleLaunchClearance}
-                disabled={isPublishingClearance}
+                disabled={isPublishingClearance || (quickClearanceProduct.stockQuantity !== undefined && quickQuantity > quickClearanceProduct.stockQuantity) || (quickClearanceProduct.stockQuantity ?? 0) <= 0}
                 className="btn-primary"
-                style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}
+                style={{ 
+                  flex: 2, 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  gap: '0.4rem',
+                  opacity: (isPublishingClearance || (quickClearanceProduct.stockQuantity !== undefined && quickQuantity > quickClearanceProduct.stockQuantity) || (quickClearanceProduct.stockQuantity ?? 0) <= 0) ? 0.5 : 1,
+                  cursor: (isPublishingClearance || (quickClearanceProduct.stockQuantity !== undefined && quickQuantity > quickClearanceProduct.stockQuantity) || (quickClearanceProduct.stockQuantity ?? 0) <= 0) ? 'not-allowed' : 'pointer'
+                }}
               >
                 {isPublishingClearance ? <RefreshCw className="animate-spin" size={16} /> : <Zap size={16} />}
                 {isPublishingClearance ? 'Đang đưa lên...' : 'Đưa Lên Storefront'}
