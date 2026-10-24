@@ -1,0 +1,666 @@
+'use client';
+
+import { useState, useRef } from 'react';
+import useSWR from 'swr';
+import { 
+  Plus, 
+  Trash2, 
+  Camera, 
+  Zap, 
+  Sparkles, 
+  Clock, 
+  Tag, 
+  AlertCircle, 
+  PackageOpen, 
+  RefreshCw, 
+  Check, 
+  X,
+  Layers,
+  ArrowRight
+} from 'lucide-react';
+
+const fetcher = (url: string) => fetch(url).then(res => res.json());
+
+const CATEGORIES = [
+  'Bakery',
+  'Fresh Produce',
+  'Beverages',
+  'Ready-to-eat',
+  'Dairy & Eggs',
+  'Snacks',
+  'Khác'
+];
+
+export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: () => void }) {
+  const { data: response, error, isLoading, mutate } = useSWR('/api/products', fetcher);
+  const products = response?.data || [];
+
+  // Form State
+  const [showForm, setShowForm] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [formSuccess, setFormSuccess] = useState<string | null>(null);
+
+  const [name, setName] = useState('');
+  const [category, setCategory] = useState('Bakery');
+  const [basePrice, setBasePrice] = useState<number | ''>('');
+  const [minPrice, setMinPrice] = useState<number | ''>('');
+  const [shelfHours, setShelfHours] = useState<number>(24);
+  const [visualKeywords, setVisualKeywords] = useState('');
+  const [sampleImage, setSampleImage] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Quick Clearance Modal State
+  const [quickClearanceProduct, setQuickClearanceProduct] = useState<any | null>(null);
+  const [quickQuantity, setQuickQuantity] = useState<number>(5);
+  const [quickHours, setQuickHours] = useState<number>(3);
+  const [isPublishingClearance, setIsPublishingClearance] = useState(false);
+
+  // Handle Photo Capture for Sample Image
+  const handlePhotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setSampleImage(event.target?.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Handle Form Submit
+  const handleCreateProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError(null);
+    setFormSuccess(null);
+
+    if (!name.trim()) {
+      setFormError('Vui lòng nhập tên sản phẩm.');
+      return;
+    }
+
+    const numBase = Number(basePrice);
+    const numMin = Number(minPrice);
+
+    if (!numBase || numBase <= 0) {
+      setFormError('Giá niêm yết phải lớn hơn 0.');
+      return;
+    }
+
+    if (!numMin || numMin <= 0) {
+      setFormError('Giá sàn phải lớn hơn 0.');
+      return;
+    }
+
+    if (numMin > numBase) {
+      setFormError('Giá sàn không được cao hơn giá niêm yết.');
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const res = await fetch('/api/products', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name.trim(),
+          category,
+          basePrice: numBase,
+          minPrice: numMin,
+          defaultShelfHours: shelfHours,
+          visualKeywords: visualKeywords.trim(),
+          sampleImages: sampleImage ? [sampleImage] : []
+        })
+      });
+
+      const result = await res.json();
+
+      if (!res.ok || !result.success) {
+        throw new Error(result.error || 'Lỗi khi lưu sản phẩm');
+      }
+
+      setFormSuccess(`Đã thêm "${name}" vào danh mục thành công!`);
+      // Reset form
+      setName('');
+      setBasePrice('');
+      setMinPrice('');
+      setVisualKeywords('');
+      setSampleImage(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+
+      mutate();
+      if (onRefreshParent) onRefreshParent();
+
+      setTimeout(() => {
+        setFormSuccess(null);
+        setShowForm(false);
+      }, 1500);
+    } catch (err: any) {
+      setFormError(err.message || 'Lỗi kết nối tới máy chủ');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Handle Delete Product
+  const handleDeleteProduct = async (id: number, productName: string) => {
+    if (!confirm(`Bạn có chắc chắn muốn xóa "${productName}" khỏi danh mục mẫu không?`)) return;
+
+    try {
+      const res = await fetch(`/api/products/${id}`, { method: 'DELETE' });
+      const result = await res.json();
+      if (result.success) {
+        mutate();
+        if (onRefreshParent) onRefreshParent();
+      } else {
+        alert(result.error || 'Không thể xóa sản phẩm.');
+      }
+    } catch (err) {
+      alert('Lỗi kết nối khi xóa sản phẩm.');
+    }
+  };
+
+  // Handle Quick Clearance Launch from Master Catalog
+  const handleLaunchClearance = async () => {
+    if (!quickClearanceProduct) return;
+    setIsPublishingClearance(true);
+
+    try {
+      const expiresAt = new Date(Date.now() + quickHours * 60 * 60 * 1000);
+      
+      // Lấy ảnh mẫu nếu có
+      let sampleImg = null;
+      try {
+        const imgs = JSON.parse(quickClearanceProduct.sampleImages || '[]');
+        if (imgs.length > 0) sampleImg = imgs[0];
+      } catch (e) {
+        sampleImg = quickClearanceProduct.sampleImages;
+      }
+
+      // Tạo lộ trình giá decay tự động
+      const base = quickClearanceProduct.basePrice;
+      const min = quickClearanceProduct.minPrice;
+      const step = Math.round((base - min) / 3);
+
+      const decaySchedule = [
+        { minutes_before_close: quickHours * 60, price: base },
+        { minutes_before_close: Math.round((quickHours * 60) * 0.66), price: base - step },
+        { minutes_before_close: Math.round((quickHours * 60) * 0.33), price: base - step * 2 },
+        { minutes_before_close: 0, price: min }
+      ];
+
+      const res = await fetch('/api/items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: quickClearanceProduct.name,
+          quantity: quickQuantity,
+          originalPrice: base,
+          expiresAt: expiresAt.toISOString(),
+          imageUrl: sampleImg,
+          aiPricingStrategy: { decay_schedule: decaySchedule },
+          aiRationale: `Kích hoạt xả kho nhanh từ Danh mục (${quickHours}h trước khi hết date). Giá sàn bảo vệ vốn: ${min.toLocaleString('vi-VN')}đ.`
+        })
+      });
+
+      if (res.ok) {
+        setQuickClearanceProduct(null);
+        if (onRefreshParent) onRefreshParent();
+        alert(`Đã đưa ${quickQuantity} phần "${quickClearanceProduct.name}" lên Storefront thành công!`);
+      } else {
+        alert('Lỗi khi đưa lên xả kho.');
+      }
+    } catch (err) {
+      alert('Lỗi kết nối khi tạo đợt xả kho.');
+    } finally {
+      setIsPublishingClearance(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: '2rem' }}>
+      {/* SECTION HEADER */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+            <Layers size={24} color="var(--color-primary-light)" />
+            <h2 style={{ fontSize: '1.5rem', margin: 0 }}>Danh mục Hàng hóa (Master Catalog)</h2>
+          </div>
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', marginTop: '0.2rem' }}>
+            Quản lý kho hàng chuẩn & ảnh mẫu thị giác cho AI Vision nhận diện
+          </p>
+        </div>
+
+        <button 
+          onClick={() => setShowForm(!showForm)}
+          className="btn-primary"
+          style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1.2rem', fontSize: '0.95rem' }}
+        >
+          {showForm ? <X size={18} /> : <Plus size={18} />}
+          {showForm ? 'Đóng Form' : '+ Thêm Sản Phẩm Mới'}
+        </button>
+      </div>
+
+      {/* QUICK ADD FORM (COLLAPSIBLE) */}
+      {showForm && (
+        <div 
+          className="glass-card" 
+          style={{ 
+            padding: '1.8rem', 
+            marginBottom: '2rem', 
+            border: '1px solid var(--color-primary-dark)',
+            animation: 'fadeIn 0.3s ease'
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.2rem' }}>
+            <h3 style={{ margin: 0, color: 'var(--color-primary-light)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Sparkles size={18} /> Thêm Sản Phẩm Vào Database
+            </h3>
+            <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>* Dữ liệu dùng đối chiếu giá & AI Vision</span>
+          </div>
+
+          {formError && (
+            <div style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--color-error)', color: '#fca5a5', padding: '0.8rem 1rem', borderRadius: 'var(--radius-sm)', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <AlertCircle size={18} />
+              <span>{formError}</span>
+            </div>
+          )}
+
+          {formSuccess && (
+            <div style={{ background: 'rgba(16, 185, 129, 0.15)', border: '1px solid var(--color-primary)', color: 'var(--color-primary-light)', padding: '0.8rem 1rem', borderRadius: 'var(--radius-sm)', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Check size={18} />
+              <span>{formSuccess}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleCreateProduct}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.2rem', marginBottom: '1.2rem' }}>
+              {/* Tên sản phẩm */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '0.4rem' }}>
+                  Tên sản phẩm <span style={{ color: 'var(--color-error)' }}>*</span>
+                </label>
+                <input 
+                  type="text"
+                  placeholder="VD: Bánh Mì Bơ Tỏi Nướng"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  style={{ width: '100%', padding: '0.7rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
+                  required
+                />
+              </div>
+
+              {/* Phân loại */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '0.4rem' }}>
+                  Ngành hàng / Phân loại
+                </label>
+                <select 
+                  value={category}
+                  onChange={e => setCategory(e.target.value)}
+                  style={{ width: '100%', padding: '0.7rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
+                >
+                  {CATEGORIES.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Giá niêm yết */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '0.4rem' }}>
+                  Giá niêm yết (VNĐ) <span style={{ color: 'var(--color-error)' }}>*</span>
+                </label>
+                <input 
+                  type="number"
+                  placeholder="30000"
+                  value={basePrice}
+                  onChange={e => setBasePrice(e.target.value ? Number(e.target.value) : '')}
+                  style={{ width: '100%', padding: '0.7rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
+                  required
+                />
+              </div>
+
+              {/* Giá sàn */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '0.4rem' }}>
+                  Giá sàn bảo vệ vốn (VNĐ) <span style={{ color: 'var(--color-error)' }}>*</span>
+                </label>
+                <input 
+                  type="number"
+                  placeholder="12000"
+                  value={minPrice}
+                  onChange={e => setMinPrice(e.target.value ? Number(e.target.value) : '')}
+                  style={{ width: '100%', padding: '0.7rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
+                  required
+                />
+              </div>
+
+              {/* Thời hạn sử dụng mặc định */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '0.4rem' }}>
+                  Thời hạn chuẩn (Giờ)
+                </label>
+                <input 
+                  type="number"
+                  placeholder="24"
+                  value={shelfHours}
+                  onChange={e => setShelfHours(Number(e.target.value) || 24)}
+                  style={{ width: '100%', padding: '0.7rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
+                />
+              </div>
+            </div>
+
+            {/* Từ khóa thị giác cho AI */}
+            <div style={{ marginBottom: '1.2rem' }}>
+              <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '0.4rem' }}>
+                Đặc điểm nhận diện cho AI Vision (Keywords & Visual Clues)
+              </label>
+              <input 
+                type="text"
+                placeholder="VD: màu vàng nâu óng, vỏ rắc lá mùi tây khô, hình tròn cắt múi cau..."
+                value={visualKeywords}
+                onChange={e => setVisualKeywords(e.target.value)}
+                style={{ width: '100%', padding: '0.7rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
+              />
+              <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                💡 Càng miêu tả chi tiết hình dáng, màu sắc, bao bì thì Gemini Vision nhận diện ngoài đời càng chính xác.
+              </span>
+            </div>
+
+            {/* Chụp / Tải ảnh mẫu */}
+            <div style={{ marginBottom: '1.5rem', background: 'var(--color-surface)', padding: '1rem', borderRadius: 'var(--radius-sm)', border: '1px dashed var(--color-border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
+                <div>
+                  <p style={{ margin: 0, fontWeight: 600, fontSize: '0.9rem' }}>Ảnh mẫu sản phẩm (Chụp trực tiếp từ điện thoại)</p>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>AI sẽ dùng ảnh này để so khớp khi quét kệ hàng</p>
+                </div>
+                
+                <input 
+                  type="file" 
+                  accept="image/*" 
+                  capture="environment" 
+                  ref={fileInputRef} 
+                  style={{ display: 'none' }} 
+                  onChange={handlePhotoCapture} 
+                />
+
+                <button 
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{ background: 'var(--color-surface-elevated)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)', padding: '0.5rem 1rem', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}
+                >
+                  <Camera size={16} /> {sampleImage ? 'Chụp / Chọn ảnh khác' : 'Chụp / Tải ảnh mẫu'}
+                </button>
+              </div>
+
+              {sampleImage && (
+                <div style={{ marginTop: '1rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                  <img src={sampleImage} alt="Sample Preview" style={{ width: '70px', height: '70px', objectFit: 'cover', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-primary)' }} />
+                  <div>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--color-primary-light)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                      <Check size={14} /> Đã chọn ảnh mẫu
+                    </span>
+                    <button 
+                      type="button" 
+                      onClick={() => setSampleImage(null)}
+                      style={{ background: 'transparent', color: 'var(--color-error)', padding: 0, fontSize: '0.75rem', marginTop: '0.2rem', textDecoration: 'underline' }}
+                    >
+                      Gỡ ảnh
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Submit Button */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+              <button 
+                type="button" 
+                onClick={() => setShowForm(false)}
+                style={{ background: 'transparent', color: 'var(--color-text-secondary)', padding: '0.75rem 1.5rem', borderRadius: 'var(--radius-md)' }}
+              >
+                Hủy
+              </button>
+
+              <button 
+                type="submit" 
+                className="btn-primary"
+                disabled={isSubmitting}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', opacity: isSubmitting ? 0.7 : 1 }}
+              >
+                {isSubmitting ? <RefreshCw className="animate-spin" size={18} /> : <Check size={18} />}
+                {isSubmitting ? 'Đang lưu vào DB...' : 'Lưu Sản Phẩm Vào Database'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* STATE 1: LOADING SKELETON */}
+      {isLoading && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.2rem' }}>
+          {[1, 2, 3].map(n => (
+            <div key={n} className="glass-card" style={{ padding: '1.5rem' }}>
+              <div className="skeleton" style={{ height: '140px', width: '100%', marginBottom: '1rem' }} />
+              <div className="skeleton" style={{ height: '20px', width: '70%', marginBottom: '0.6rem' }} />
+              <div className="skeleton" style={{ height: '16px', width: '40%', marginBottom: '1rem' }} />
+              <div className="skeleton" style={{ height: '36px', width: '100%' }} />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* STATE 2: ERROR STATE WITH RETRY */}
+      {error && !isLoading && (
+        <div className="glass-card" style={{ padding: '2.5rem', textAlign: 'center', border: '1px solid var(--color-error)' }}>
+          <AlertCircle size={40} color="var(--color-error)" style={{ margin: '0 auto 1rem' }} />
+          <h3 style={{ color: 'var(--color-error)', marginBottom: '0.5rem' }}>Không thể tải danh mục sản phẩm</h3>
+          <p style={{ color: 'var(--color-text-secondary)', marginBottom: '1.5rem' }}>{error.message || 'Lỗi kết nối cơ sở dữ liệu'}</p>
+          <button onClick={() => mutate()} className="btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+            <RefreshCw size={16} /> Thử lại
+          </button>
+        </div>
+      )}
+
+      {/* STATE 3: EMPTY STATE */}
+      {!isLoading && !error && products.length === 0 && (
+        <div className="glass-card" style={{ padding: '3rem', textAlign: 'center' }}>
+          <PackageOpen size={48} color="var(--color-text-muted)" style={{ margin: '0 auto 1rem' }} />
+          <h3 style={{ marginBottom: '0.5rem' }}>Danh mục sản phẩm đang trống</h3>
+          <p style={{ color: 'var(--color-text-secondary)', marginBottom: '1.5rem' }}>
+            Bạn chưa thêm mặt hàng nào vào Database. Hãy thêm mặt hàng đầu tiên để kích hoạt tính năng nhận diện AI!
+          </p>
+          <button onClick={() => setShowForm(true)} className="btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Plus size={16} /> + Thêm sản phẩm đầu tiên
+          </button>
+        </div>
+      )}
+
+      {/* STATE 4: SUCCESS STATE (PRODUCT GRID) */}
+      {!isLoading && !error && products.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.2rem' }}>
+          {products.map((product: any) => {
+            let sampleImg = null;
+            try {
+              const imgs = JSON.parse(product.sampleImages || '[]');
+              if (imgs.length > 0) sampleImg = imgs[0];
+            } catch (e) {
+              sampleImg = product.sampleImages;
+            }
+
+            return (
+              <div 
+                key={product.id} 
+                className="glass-card" 
+                style={{ 
+                  padding: '1.2rem', 
+                  display: 'flex', 
+                  flexDirection: 'column', 
+                  justifyContent: 'space-between',
+                  border: '1px solid var(--color-border)',
+                  position: 'relative'
+                }}
+              >
+                <div>
+                  {/* Image & Badge */}
+                  <div style={{ position: 'relative', height: '140px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', overflow: 'hidden', marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {sampleImg ? (
+                      <img src={sampleImg} alt={product.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ) : (
+                      <div style={{ textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                        <Camera size={28} style={{ margin: '0 auto 0.3rem', opacity: 0.5 }} />
+                        <span style={{ fontSize: '0.75rem', display: 'block' }}>Chưa có ảnh mẫu</span>
+                      </div>
+                    )}
+                    
+                    <span style={{ position: 'absolute', top: '8px', left: '8px', background: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(4px)', color: 'var(--color-primary-light)', fontSize: '0.75rem', fontWeight: 600, padding: '0.2rem 0.6rem', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+                      {product.category || 'Bakery'}
+                    </span>
+
+                    {product.sku && (
+                      <span style={{ position: 'absolute', bottom: '8px', right: '8px', background: 'rgba(0, 0, 0, 0.75)', color: '#94a3b8', fontSize: '0.7rem', padding: '0.1rem 0.4rem', borderRadius: 'var(--radius-sm)' }}>
+                        {product.sku}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Title & Prices */}
+                  <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '1.1rem', color: 'var(--color-text-primary)' }}>{product.name}</h4>
+                  
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '0.6rem' }}>
+                    <div>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', display: 'block' }}>Giá niêm yết</span>
+                      <strong style={{ color: 'var(--color-text-primary)', fontSize: '1rem' }}>
+                        {product.basePrice.toLocaleString('vi-VN')}đ
+                      </strong>
+                    </div>
+
+                    <div style={{ textAlign: 'right' }}>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--color-warning)', display: 'block' }}>Giá sàn (Min)</span>
+                      <strong style={{ color: 'var(--color-warning)', fontSize: '0.95rem' }}>
+                        {product.minPrice.toLocaleString('vi-VN')}đ
+                      </strong>
+                    </div>
+                  </div>
+
+                  {/* Visual Clues */}
+                  {product.visualKeywords && (
+                    <div style={{ background: 'var(--color-bg)', padding: '0.5rem', borderRadius: 'var(--radius-sm)', marginBottom: '0.8rem', fontSize: '0.75rem', color: 'var(--color-text-secondary)' }}>
+                      <span style={{ color: 'var(--color-primary-light)', fontWeight: 600 }}>🤖 AI Clues:</span> {product.visualKeywords}
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
+                    <Clock size={13} />
+                    <span>Hạn chuẩn: {product.defaultShelfHours || 24}h</span>
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div style={{ display: 'flex', gap: '0.5rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.8rem' }}>
+                  <button 
+                    onClick={() => setQuickClearanceProduct(product)}
+                    style={{ flex: 1, background: 'linear-gradient(135deg, var(--color-primary), var(--color-primary-dark))', color: 'white', padding: '0.5rem', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}
+                  >
+                    <Zap size={14} /> Xả kho ngay
+                  </button>
+
+                  <button 
+                    onClick={() => handleDeleteProduct(product.id, product.name)}
+                    style={{ background: 'rgba(239, 68, 68, 0.15)', color: 'var(--color-error)', border: '1px solid rgba(239, 68, 68, 0.3)', padding: '0.5rem 0.7rem', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    title="Xóa khỏi danh mục"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* MODAL: QUICK CLEARANCE LAUNCH */}
+      {quickClearanceProduct && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.75)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1rem' }}>
+          <div className="glass-card" style={{ maxWidth: '420px', width: '100%', padding: '1.8rem', border: '1px solid var(--color-primary)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+              <div>
+                <span style={{ fontSize: '0.8rem', color: 'var(--color-primary-light)', fontWeight: 600 }}>⚡ ĐƯA LÊN XẢ KHO NHANH</span>
+                <h3 style={{ margin: '0.2rem 0 0 0', fontSize: '1.2rem' }}>{quickClearanceProduct.name}</h3>
+              </div>
+              <button 
+                onClick={() => setQuickClearanceProduct(null)}
+                style={{ background: 'transparent', color: 'var(--color-text-muted)', padding: '0.2rem' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div style={{ background: 'var(--color-bg)', padding: '0.8rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.2rem', fontSize: '0.85rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
+                <span style={{ color: 'var(--color-text-secondary)' }}>Giá niêm yết:</span>
+                <strong>{quickClearanceProduct.basePrice.toLocaleString('vi-VN')}đ</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--color-warning)' }}>Giá sàn bảo vệ vốn:</span>
+                <strong style={{ color: 'var(--color-warning)' }}>{quickClearanceProduct.minPrice.toLocaleString('vi-VN')}đ</strong>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '0.3rem' }}>
+                Số lượng đưa lên kệ xả kho
+              </label>
+              <input 
+                type="number"
+                min="1"
+                value={quickQuantity}
+                onChange={e => setQuickQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                style={{ width: '100%', padding: '0.7rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: '1.5rem' }}>
+              <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '0.3rem' }}>
+                Thời gian xả kho (Giờ đến khi đóng cửa / hết hạn)
+              </label>
+              <select 
+                value={quickHours}
+                onChange={e => setQuickHours(Number(e.target.value))}
+                style={{ width: '100%', padding: '0.7rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
+              >
+                <option value={1}>1 Giờ (Gấp - Giảm nhanh)</option>
+                <option value={2}>2 Giờ (Tiêu chuẩn buổi tối)</option>
+                <option value={3}>3 Giờ</option>
+                <option value={4}>4 Giờ</option>
+                <option value={6}>6 Giờ</option>
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.8rem' }}>
+              <button 
+                onClick={() => setQuickClearanceProduct(null)}
+                style={{ flex: 1, background: 'var(--color-surface)', color: 'var(--color-text-secondary)', padding: '0.7rem', borderRadius: 'var(--radius-md)' }}
+              >
+                Hủy
+              </button>
+
+              <button 
+                onClick={handleLaunchClearance}
+                disabled={isPublishingClearance}
+                className="btn-primary"
+                style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}
+              >
+                {isPublishingClearance ? <RefreshCw className="animate-spin" size={16} /> : <Zap size={16} />}
+                {isPublishingClearance ? 'Đang đưa lên...' : 'Đưa Lên Storefront'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
