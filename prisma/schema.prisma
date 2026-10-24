@@ -14,6 +14,7 @@ model Product {
   category          String?
   basePrice         Float
   minPrice          Float
+  stockQuantity     Int             @default(0)   // Số lượng thực tế đang có trong kho
   defaultShelfHours Int             @default(24)
   sampleImages      String?         // JSON string: ["/catalog/BREAD-CROISSANT-01.jpg"]
   visualKeywords    String?         // Gợi ý thị giác nhận diện cho AI Vision

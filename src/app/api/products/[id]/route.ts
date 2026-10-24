@@ -56,6 +56,28 @@ export async function PATCH(
     }
 
     const body = await req.json();
+
+    if (body.basePrice !== undefined && (isNaN(Number(body.basePrice)) || Number(body.basePrice) <= 0)) {
+      return NextResponse.json({ success: false, error: 'Giá niêm yết phải lớn hơn 0' }, { status: 400 });
+    }
+    if (body.minPrice !== undefined && (isNaN(Number(body.minPrice)) || Number(body.minPrice) <= 0)) {
+      return NextResponse.json({ success: false, error: 'Giá sàn phải lớn hơn 0' }, { status: 400 });
+    }
+    if (body.basePrice !== undefined && body.minPrice !== undefined && Number(body.minPrice) > Number(body.basePrice)) {
+      return NextResponse.json({ success: false, error: 'Giá sàn không được lớn hơn giá niêm yết' }, { status: 400 });
+    }
+
+    let sampleImagesStr = undefined;
+    if (body.sampleImages !== undefined) {
+      if (Array.isArray(body.sampleImages)) {
+        sampleImagesStr = JSON.stringify(body.sampleImages);
+      } else if (typeof body.sampleImages === 'string' && body.sampleImages.trim().length > 0) {
+        sampleImagesStr = body.sampleImages.startsWith('[') ? body.sampleImages : JSON.stringify([body.sampleImages]);
+      } else {
+        sampleImagesStr = '[]';
+      }
+    }
+
     const updated = await prisma.product.update({
       where: { id },
       data: {
@@ -63,8 +85,10 @@ export async function PATCH(
         ...(body.category && { category: body.category.trim() }),
         ...(body.basePrice && { basePrice: Number(body.basePrice) }),
         ...(body.minPrice && { minPrice: Number(body.minPrice) }),
+        ...(body.stockQuantity !== undefined && { stockQuantity: Math.max(0, parseInt(body.stockQuantity) || 0) }),
         ...(body.defaultShelfHours && { defaultShelfHours: Number(body.defaultShelfHours) }),
         ...(body.visualKeywords !== undefined && { visualKeywords: body.visualKeywords?.trim() || null }),
+        ...(sampleImagesStr !== undefined && { sampleImages: sampleImagesStr })
       }
     });
 

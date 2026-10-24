@@ -15,7 +15,8 @@ import {
   Check, 
   X,
   Layers,
-  Wand2
+  Wand2,
+  Pencil
 } from 'lucide-react';
 
 const fetcher = (url: string) => fetch(url).then(res => res.json());
@@ -49,7 +50,11 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
   const { data: response, error, isLoading, mutate } = useSWR('/api/products', fetcher);
   const products = response?.data || [];
 
-  // Form State
+  // Lấy dữ liệu kệ xả kho hiện tại để đếm số lượng đang có của mỗi sản phẩm
+  const { data: itemsResponse } = useSWR('/api/items', fetcher, { refreshInterval: 5000 });
+  const activeClearanceItems = itemsResponse?.data || [];
+
+  // Form State (Thêm mới)
   const [showForm, setShowForm] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGeneratingKeywords, setIsGeneratingKeywords] = useState(false);
@@ -60,18 +65,32 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
   const [category, setCategory] = useState('Bakery');
   const [basePrice, setBasePrice] = useState<number | ''>('');
   const [minPrice, setMinPrice] = useState<number | ''>('');
-  
-  // Thời hạn chuẩn chia thành Ngày và Giờ
+  const [stockQuantity, setStockQuantity] = useState<number | ''>(20);
   const [shelfDays, setShelfDays] = useState<number>(1);
   const [shelfHours, setShelfHours] = useState<number>(0);
-  
   const [visualKeywords, setVisualKeywords] = useState('');
   const [sampleImage, setSampleImage] = useState<string | null>(null);
+
+  // Edit Modal State (Chỉnh sửa)
+  const [editingProduct, setEditingProduct] = useState<any | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editCategory, setEditCategory] = useState('Bakery');
+  const [editBasePrice, setEditBasePrice] = useState<number | ''>('');
+  const [editMinPrice, setEditMinPrice] = useState<number | ''>('');
+  const [editStockQuantity, setEditStockQuantity] = useState<number | ''>(0);
+  const [editShelfDays, setEditShelfDays] = useState<number>(1);
+  const [editShelfHours, setEditShelfHours] = useState<number>(0);
+  const [editVisualKeywords, setEditVisualKeywords] = useState('');
+  const [editSampleImage, setEditSampleImage] = useState<string | null>(null);
+  const [isEditSubmitting, setIsEditSubmitting] = useState(false);
+  const [isEditGeneratingKeywords, setIsEditGeneratingKeywords] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   // Track ảnh bị lỗi load
   const [brokenImages, setBrokenImages] = useState<Record<number, boolean>>({});
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const editFileInputRef = useRef<HTMLInputElement>(null);
 
   // Quick Clearance Modal State
   const [quickClearanceProduct, setQuickClearanceProduct] = useState<any | null>(null);
@@ -81,8 +100,9 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
 
   // Tính tổng số giờ hạn dùng từ Days + Hours
   const totalShelfHours = Math.max(1, (shelfDays * 24) + shelfHours);
+  const totalEditShelfHours = Math.max(1, (editShelfDays * 24) + editShelfHours);
 
-  // Điểm 3: Tự động gọi AI Gemini để sinh gợi ý từ khóa thị giác
+  // AI gợi ý từ khóa thị giác cho Form Thêm
   const handleAutoGenerateKeywords = async () => {
     if (!name.trim()) {
       setFormError('Vui lòng nhập tên món ăn trước khi yêu cầu AI gợi ý.');
@@ -112,7 +132,120 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
     }
   };
 
-  // Handle Photo Capture for Sample Image
+  // AI gợi ý từ khóa thị giác cho Form Sửa
+  const handleEditAutoGenerateKeywords = async () => {
+    if (!editName.trim()) {
+      setEditError('Vui lòng nhập tên món ăn trước.');
+      return;
+    }
+
+    setIsEditGeneratingKeywords(true);
+    setEditError(null);
+
+    try {
+      const res = await fetch('/api/ai/suggest-keywords', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: editName.trim(), category: editCategory })
+      });
+
+      const result = await res.json();
+      if (result.success && result.data?.keywords) {
+        setEditVisualKeywords(result.data.keywords);
+      }
+    } catch (err: any) {
+      setEditError(err.message || 'Lỗi khi gọi AI');
+    } finally {
+      setIsEditGeneratingKeywords(false);
+    }
+  };
+
+  // Mở modal Chỉnh sửa sản phẩm
+  const handleOpenEdit = (product: any) => {
+    setEditingProduct(product);
+    setEditName(product.name);
+    setEditCategory(product.category || 'Bakery');
+    setEditBasePrice(product.basePrice);
+    setEditMinPrice(product.minPrice);
+    setEditStockQuantity(product.stockQuantity ?? 0);
+    
+    const totalHours = product.defaultShelfHours || 24;
+    setEditShelfDays(Math.floor(totalHours / 24));
+    setEditShelfHours(totalHours % 24);
+    
+    setEditVisualKeywords(product.visualKeywords || '');
+
+    let img = null;
+    try {
+      const parsed = JSON.parse(product.sampleImages || '[]');
+      img = Array.isArray(parsed) && parsed.length > 0 ? parsed[0] : product.sampleImages;
+    } catch {
+      img = product.sampleImages;
+    }
+    setEditSampleImage(img);
+    setEditError(null);
+  };
+
+  // Lưu chỉnh sửa sản phẩm
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingProduct) return;
+    setEditError(null);
+
+    const numBase = Number(editBasePrice);
+    const numMin = Number(editMinPrice);
+
+    if (!editName.trim()) {
+      setEditError('Tên sản phẩm không được để trống.');
+      return;
+    }
+    if (!numBase || numBase <= 0) {
+      setEditError('Giá niêm yết phải lớn hơn 0.');
+      return;
+    }
+    if (!numMin || numMin <= 0) {
+      setEditError('Giá sàn phải lớn hơn 0.');
+      return;
+    }
+    if (numMin > numBase) {
+      setEditError('Giá sàn không được lớn hơn giá niêm yết.');
+      return;
+    }
+
+    setIsEditSubmitting(true);
+
+    try {
+      const res = await fetch(`/api/products/${editingProduct.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: editName.trim(),
+          category: editCategory,
+          basePrice: numBase,
+          minPrice: numMin,
+          stockQuantity: typeof editStockQuantity === 'number' ? Math.max(0, editStockQuantity) : 0,
+          defaultShelfHours: totalEditShelfHours,
+          visualKeywords: editVisualKeywords.trim(),
+          sampleImages: editSampleImage ? [editSampleImage] : []
+        })
+      });
+
+      const result = await res.json();
+      if (!res.ok || !result.success) {
+        throw new Error(result.error || 'Lỗi khi cập nhật sản phẩm');
+      }
+
+      setEditingProduct(null);
+      mutate();
+      if (onRefreshParent) onRefreshParent();
+    } catch (err: any) {
+      setEditError(err.message || 'Lỗi khi lưu chỉnh sửa');
+    } finally {
+      setIsEditSubmitting(false);
+    }
+  };
+
+  // Chụp / Tải ảnh mẫu (Form thêm)
   const handlePhotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -124,7 +257,19 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
     reader.readAsDataURL(file);
   };
 
-  // Handle Form Submit
+  // Chụp / Tải ảnh mẫu (Form sửa)
+  const handleEditPhotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setEditSampleImage(event.target?.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Tạo sản phẩm mới
   const handleCreateProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
@@ -142,12 +287,10 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
       setFormError('Giá niêm yết phải lớn hơn 0.');
       return;
     }
-
     if (!numMin || numMin <= 0) {
       setFormError('Giá sàn phải lớn hơn 0.');
       return;
     }
-
     if (numMin > numBase) {
       setFormError('Giá sàn không được cao hơn giá niêm yết.');
       return;
@@ -164,6 +307,7 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
           category,
           basePrice: numBase,
           minPrice: numMin,
+          stockQuantity: typeof stockQuantity === 'number' ? Math.max(0, stockQuantity) : 0,
           defaultShelfHours: totalShelfHours,
           visualKeywords: visualKeywords.trim(),
           sampleImages: sampleImage ? [sampleImage] : []
@@ -177,10 +321,10 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
       }
 
       setFormSuccess(`Đã thêm "${name}" vào danh mục thành công!`);
-      // Reset form
       setName('');
       setBasePrice('');
       setMinPrice('');
+      setStockQuantity(20);
       setShelfDays(1);
       setShelfHours(0);
       setVisualKeywords('');
@@ -201,7 +345,7 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
     }
   };
 
-  // Handle Delete Product
+  // Xóa sản phẩm
   const handleDeleteProduct = async (id: number, productName: string) => {
     if (!confirm(`Bạn có chắc chắn muốn xóa "${productName}" khỏi danh mục mẫu không?`)) return;
 
@@ -219,7 +363,7 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
     }
   };
 
-  // Handle Quick Clearance Launch from Master Catalog
+  // Đưa lên xả kho nhanh
   const handleLaunchClearance = async () => {
     if (!quickClearanceProduct) return;
     setIsPublishingClearance(true);
@@ -227,7 +371,6 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
     try {
       const expiresAt = new Date(Date.now() + quickHours * 60 * 60 * 1000);
       
-      // Lấy ảnh mẫu nếu có
       let sampleImg = null;
       try {
         const imgs = JSON.parse(quickClearanceProduct.sampleImages || '[]');
@@ -236,7 +379,6 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
         sampleImg = quickClearanceProduct.sampleImages;
       }
 
-      // Tạo lộ trình giá decay tự động
       const base = quickClearanceProduct.basePrice;
       const min = quickClearanceProduct.minPrice;
       const step = Math.round((base - min) / 3);
@@ -252,6 +394,7 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          productId: quickClearanceProduct.id,
           name: quickClearanceProduct.name,
           quantity: quickQuantity,
           originalPrice: base,
@@ -263,7 +406,18 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
       });
 
       if (res.ok) {
+        // Tự động cập nhật giảm số lượng tồn kho trong Master Catalog
+        if (quickClearanceProduct.id && typeof quickClearanceProduct.stockQuantity === 'number') {
+          const newStock = Math.max(0, quickClearanceProduct.stockQuantity - quickQuantity);
+          await fetch(`/api/products/${quickClearanceProduct.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stockQuantity: newStock })
+          }).catch(err => console.error('Lỗi cập nhật tồn kho:', err));
+        }
+
         setQuickClearanceProduct(null);
+        mutate();
         if (onRefreshParent) onRefreshParent();
         alert(`Đã đưa ${quickQuantity} phần "${quickClearanceProduct.name}" lên Storefront thành công!`);
       } else {
@@ -290,7 +444,6 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
           </p>
         </div>
 
-        {/* Điểm 1: Đã sửa, chỉ giữ 1 dấu + qua icon */}
         <button 
           onClick={() => setShowForm(!showForm)}
           className="btn-primary"
@@ -396,7 +549,23 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
                 />
               </div>
 
-              {/* Điểm 2: Thời hạn chuẩn dạng Ngày / Giờ */}
+              {/* Số lượng tồn kho */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '0.4rem' }}>
+                  Số lượng tồn kho (Hàng sẵn có) <span style={{ color: 'var(--color-error)' }}>*</span>
+                </label>
+                <input 
+                  type="number"
+                  min="0"
+                  placeholder="20"
+                  value={stockQuantity}
+                  onChange={e => setStockQuantity(e.target.value ? Math.max(0, parseInt(e.target.value) || 0) : '')}
+                  style={{ width: '100%', padding: '0.7rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
+                  required
+                />
+              </div>
+
+              {/* Thời hạn chuẩn dạng Ngày / Giờ */}
               <div style={{ gridColumn: 'span 2' }}>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '0.4rem' }}>
                   Thời hạn sử dụng chuẩn (Tháng / Ngày / Giờ)
@@ -435,7 +604,7 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
               </div>
             </div>
 
-            {/* Điểm 3: Tự động AI gợi ý đặc điểm nhận diện */}
+            {/* AI gợi ý đặc điểm nhận diện */}
             <div style={{ marginBottom: '1.2rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
                 <label style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', margin: 0 }}>
@@ -474,9 +643,6 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
                 onChange={e => setVisualKeywords(e.target.value)}
                 style={{ width: '100%', padding: '0.7rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
               />
-              <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-                💡 Không cần tự nghĩ: Chỉ cần nhập Tên món, bấm nút màu tím để AI tự viết đặc điểm nhận diện chuẩn xác nhất.
-              </span>
             </div>
 
             {/* Chụp / Tải ảnh mẫu */}
@@ -602,6 +768,11 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
 
             const isBroken = brokenImages[product.id];
 
+            // TÍNH TOÁN SỐ LƯỢNG ĐANG CÓ TRÊN KỆ XẢ KHO
+            const currentClearanceQty = activeClearanceItems
+              .filter((item: any) => item.productId === product.id || item.name?.toLowerCase() === product.name?.toLowerCase())
+              .reduce((sum: number, it: any) => sum + (it.currentQuantity || 0), 0);
+
             return (
               <div 
                 key={product.id} 
@@ -616,8 +787,8 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
                 }}
               >
                 <div>
-                  {/* Image & Badge - Điểm 4: Xử lý hiển thị ảnh an toàn có fallback */}
-                  <div style={{ position: 'relative', height: '140px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', overflow: 'hidden', marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {/* Image & Badge */}
+                  <div style={{ position: 'relative', height: '140px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', overflow: 'hidden', marginBottom: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     {sampleImg && !isBroken ? (
                       <img 
                         src={sampleImg} 
@@ -639,6 +810,37 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
                     {product.sku && (
                       <span style={{ position: 'absolute', bottom: '8px', right: '8px', background: 'rgba(0, 0, 0, 0.75)', color: '#94a3b8', fontSize: '0.7rem', padding: '0.1rem 0.4rem', borderRadius: 'var(--radius-sm)' }}>
                         {product.sku}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* HUY HIỆU HIỂN THỊ SỐ LƯỢNG TỒN KHO & ĐANG XẢ KHO */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '0.6rem' }}>
+                    {/* Tồn kho trong database */}
+                    <span style={{ 
+                      background: (product.stockQuantity || 0) > 0 ? 'rgba(59, 130, 246, 0.15)' : 'rgba(239, 68, 68, 0.15)', 
+                      color: (product.stockQuantity || 0) > 0 ? '#60a5fa' : '#f87171', 
+                      border: `1px solid ${(product.stockQuantity || 0) > 0 ? 'rgba(59, 130, 246, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`, 
+                      padding: '0.2rem 0.5rem', 
+                      borderRadius: 'var(--radius-sm)', 
+                      fontSize: '0.75rem', 
+                      fontWeight: 600, 
+                      display: 'inline-flex', 
+                      alignItems: 'center', 
+                      gap: '0.3rem' 
+                    }}>
+                      📦 Kho: <strong>{product.stockQuantity ?? 0}</strong>
+                    </span>
+
+                    {/* Kệ xả kho */}
+                    {currentClearanceQty > 0 ? (
+                      <span style={{ background: 'rgba(16, 185, 129, 0.15)', color: 'var(--color-primary-light)', border: '1px solid var(--color-primary-dark)', padding: '0.2rem 0.5rem', borderRadius: 'var(--radius-sm)', fontSize: '0.75rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--color-primary)', display: 'inline-block' }} />
+                        Đang xả: <strong>{currentClearanceQty}</strong>
+                      </span>
+                    ) : (
+                      <span style={{ background: 'rgba(100, 116, 139, 0.15)', color: 'var(--color-text-muted)', border: '1px solid var(--color-border)', padding: '0.2rem 0.5rem', borderRadius: 'var(--radius-sm)', fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                        Chưa xả kho
                       </span>
                     )}
                   </div>
@@ -669,28 +871,40 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
                     </div>
                   )}
 
-                  {/* Điểm 2: Format thời hạn chuẩn theo Ngày / Giờ thân thiện */}
+                  {/* Thời hạn chuẩn */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
                     <Clock size={13} />
                     <span>Hạn chuẩn: <strong>{formatShelfLife(product.defaultShelfHours)}</strong></span>
                   </div>
                 </div>
 
-                {/* Actions */}
-                <div style={{ display: 'flex', gap: '0.5rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.8rem' }}>
+                {/* Actions: Xả kho, Sửa, Xóa */}
+                <div style={{ display: 'flex', gap: '0.4rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.8rem' }}>
                   <button 
-                    onClick={() => setQuickClearanceProduct(product)}
-                    style={{ flex: 1, background: 'linear-gradient(135deg, var(--color-primary), var(--color-primary-dark))', color: 'white', padding: '0.5rem', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}
+                    onClick={() => {
+                      setQuickClearanceProduct(product);
+                      const available = product.stockQuantity ?? 0;
+                      setQuickQuantity(available > 0 ? Math.min(5, available) : 1);
+                    }}
+                    style={{ flex: 2, background: 'linear-gradient(135deg, var(--color-primary), var(--color-primary-dark))', color: 'white', padding: '0.5rem 0.6rem', borderRadius: 'var(--radius-sm)', fontSize: '0.82rem', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}
                   >
-                    <Zap size={14} /> Xả kho ngay
+                    <Zap size={14} /> Xả kho
+                  </button>
+
+                  <button 
+                    onClick={() => handleOpenEdit(product)}
+                    style={{ flex: 1, background: 'var(--color-surface-elevated)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)', padding: '0.5rem 0.6rem', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.2rem', fontSize: '0.82rem', fontWeight: 500 }}
+                    title="Chỉnh sửa thông tin"
+                  >
+                    <Pencil size={13} /> Sửa
                   </button>
 
                   <button 
                     onClick={() => handleDeleteProduct(product.id, product.name)}
-                    style={{ background: 'rgba(239, 68, 68, 0.15)', color: 'var(--color-error)', border: '1px solid rgba(239, 68, 68, 0.3)', padding: '0.5rem 0.7rem', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    style={{ background: 'rgba(239, 68, 68, 0.15)', color: 'var(--color-error)', border: '1px solid rgba(239, 68, 68, 0.3)', padding: '0.5rem 0.6rem', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                     title="Xóa khỏi danh mục"
                   >
-                    <Trash2 size={16} />
+                    <Trash2 size={15} />
                   </button>
                 </div>
               </div>
@@ -699,7 +913,216 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
         </div>
       )}
 
-      {/* MODAL: QUICK CLEARANCE LAUNCH */}
+      {/* MODAL 1: CHỈNH SỬA THÔNG TIN SẢN PHẨM */}
+      {editingProduct && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.75)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1rem' }}>
+          <div className="glass-card" style={{ maxWidth: '540px', width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '1.8rem', border: '1px solid var(--color-primary-light)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.2rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Pencil size={20} color="var(--color-primary-light)" />
+                <h3 style={{ margin: 0, fontSize: '1.2rem' }}>Chỉnh Sửa Thông Tin Sản Phẩm</h3>
+              </div>
+              <button 
+                onClick={() => setEditingProduct(null)}
+                style={{ background: 'transparent', color: 'var(--color-text-muted)', padding: '0.2rem' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {editError && (
+              <div style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--color-error)', color: '#fca5a5', padding: '0.8rem', borderRadius: 'var(--radius-sm)', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+                <AlertCircle size={16} />
+                <span>{editError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveEdit}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                <div style={{ gridColumn: 'span 2' }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '0.3rem' }}>Tên sản phẩm *</label>
+                  <input 
+                    type="text" 
+                    value={editName}
+                    onChange={e => setEditName(e.target.value)}
+                    style={{ width: '100%', padding: '0.65rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '0.3rem' }}>Phân loại</label>
+                  <select 
+                    value={editCategory}
+                    onChange={e => setEditCategory(e.target.value)}
+                    style={{ width: '100%', padding: '0.65rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
+                  >
+                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '0.3rem' }}>Mã SKU</label>
+                  <input 
+                    type="text" 
+                    value={editingProduct.sku || ''}
+                    disabled
+                    style={{ width: '100%', padding: '0.65rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'rgba(0,0,0,0.3)', color: 'var(--color-text-muted)', cursor: 'not-allowed' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '0.3rem' }}>Giá niêm yết (VNĐ) *</label>
+                  <input 
+                    type="number" 
+                    value={editBasePrice}
+                    onChange={e => setEditBasePrice(e.target.value ? Number(e.target.value) : '')}
+                    style={{ width: '100%', padding: '0.65rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '0.3rem' }}>Giá sàn bảo vệ vốn (VNĐ) *</label>
+                  <input 
+                    type="number" 
+                    value={editMinPrice}
+                    onChange={e => setEditMinPrice(e.target.value ? Number(e.target.value) : '')}
+                    style={{ width: '100%', padding: '0.65rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '0.3rem' }}>Số lượng tồn kho (Hàng có sẵn) *</label>
+                  <input 
+                    type="number" 
+                    min="0"
+                    value={editStockQuantity}
+                    onChange={e => setEditStockQuantity(e.target.value ? Math.max(0, parseInt(e.target.value) || 0) : '')}
+                    style={{ width: '100%', padding: '0.65rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
+                    required
+                  />
+                </div>
+
+                {/* Hạn chuẩn */}
+                <div style={{ gridColumn: 'span 2' }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '0.3rem' }}>Thời hạn chuẩn</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.8rem', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <input 
+                        type="number" 
+                        min="0" 
+                        value={editShelfDays}
+                        onChange={e => setEditShelfDays(Math.max(0, parseInt(e.target.value) || 0))}
+                        style={{ width: '100%', padding: '0.65rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
+                      />
+                      <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Ngày</span>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <input 
+                        type="number" 
+                        min="0" 
+                        max="23"
+                        value={editShelfHours}
+                        onChange={e => setEditShelfHours(Math.max(0, Math.min(23, parseInt(e.target.value) || 0)))}
+                        style={{ width: '100%', padding: '0.65rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
+                      />
+                      <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Giờ</span>
+                    </div>
+                  </div>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--color-primary-light)', display: 'block', marginTop: '0.2rem' }}>
+                    ⏳ Quy đổi: <strong>{formatShelfLife(totalEditShelfHours)}</strong> ({totalEditShelfHours} giờ)
+                  </span>
+                </div>
+              </div>
+
+              {/* AI Clues */}
+              <div style={{ marginBottom: '1rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                  <label style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', margin: 0 }}>Đặc điểm nhận diện AI</label>
+                  <button 
+                    type="button"
+                    onClick={handleEditAutoGenerateKeywords}
+                    disabled={isEditGeneratingKeywords || !editName.trim()}
+                    style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', color: 'white', border: 'none', padding: '0.25rem 0.6rem', borderRadius: 'var(--radius-sm)', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}
+                  >
+                    <Wand2 size={12} className={isEditGeneratingKeywords ? 'animate-spin' : ''} />
+                    {isEditGeneratingKeywords ? 'AI đang viết...' : '✨ AI Viết Lại'}
+                  </button>
+                </div>
+                <input 
+                  type="text" 
+                  value={editVisualKeywords}
+                  onChange={e => setEditVisualKeywords(e.target.value)}
+                  style={{ width: '100%', padding: '0.65rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
+                />
+              </div>
+
+              {/* Ảnh mẫu */}
+              <div style={{ marginBottom: '1.2rem', background: 'var(--color-surface)', padding: '0.8rem', borderRadius: 'var(--radius-sm)', border: '1px dashed var(--color-border)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.8rem' }}>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>Ảnh mẫu sản phẩm</span>
+                  
+                  <input 
+                    type="file" 
+                    accept="image/*" 
+                    capture="environment" 
+                    ref={editFileInputRef} 
+                    style={{ display: 'none' }} 
+                    onChange={handleEditPhotoCapture} 
+                  />
+
+                  <button 
+                    type="button"
+                    onClick={() => editFileInputRef.current?.click()}
+                    style={{ background: 'var(--color-surface-elevated)', color: 'white', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                  >
+                    <Camera size={14} /> Đổi ảnh mẫu
+                  </button>
+                </div>
+
+                {editSampleImage && (
+                  <div style={{ marginTop: '0.6rem', display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
+                    <img src={editSampleImage} alt="Sample" style={{ width: '50px', height: '50px', objectFit: 'cover', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-primary)' }} />
+                    <button 
+                      type="button" 
+                      onClick={() => setEditSampleImage(null)}
+                      style={{ background: 'transparent', color: 'var(--color-error)', fontSize: '0.75rem', padding: 0, textDecoration: 'underline' }}
+                    >
+                      Gỡ ảnh
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Submit Buttons */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.8rem' }}>
+                <button 
+                  type="button"
+                  onClick={() => setEditingProduct(null)}
+                  style={{ background: 'transparent', color: 'var(--color-text-secondary)', padding: '0.6rem 1.2rem', borderRadius: 'var(--radius-md)' }}
+                >
+                  Hủy
+                </button>
+
+                <button 
+                  type="submit"
+                  disabled={isEditSubmitting}
+                  className="btn-primary"
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.6rem 1.4rem' }}
+                >
+                  {isEditSubmitting ? <RefreshCw className="animate-spin" size={16} /> : <Check size={16} />}
+                  {isEditSubmitting ? 'Đang lưu...' : 'Lưu Thay Đổi'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: QUICK CLEARANCE LAUNCH */}
       {quickClearanceProduct && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.75)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1rem' }}>
           <div className="glass-card" style={{ maxWidth: '420px', width: '100%', padding: '1.8rem', border: '1px solid var(--color-primary)' }}>
@@ -717,6 +1140,10 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
             </div>
 
             <div style={{ background: 'var(--color-bg)', padding: '0.8rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.2rem', fontSize: '0.85rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
+                <span style={{ color: 'var(--color-text-secondary)' }}>Tồn kho hiện có:</span>
+                <strong style={{ color: '#60a5fa' }}>📦 {quickClearanceProduct.stockQuantity ?? 0} sản phẩm</strong>
+              </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
                 <span style={{ color: 'var(--color-text-secondary)' }}>Giá niêm yết:</span>
                 <strong>{quickClearanceProduct.basePrice.toLocaleString('vi-VN')}đ</strong>
@@ -738,6 +1165,11 @@ export default function CatalogManager({ onRefreshParent }: { onRefreshParent?: 
                 onChange={e => setQuickQuantity(Math.max(1, parseInt(e.target.value) || 1))}
                 style={{ width: '100%', padding: '0.7rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'white' }}
               />
+              {quickClearanceProduct.stockQuantity !== undefined && quickQuantity > quickClearanceProduct.stockQuantity && (
+                <p style={{ margin: '0.4rem 0 0', color: '#fca5a5', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  ⚠️ Số lượng xả kho ({quickQuantity}) đang vượt quá tồn kho sẵn có ({quickClearanceProduct.stockQuantity}).
+                </p>
+              )}
             </div>
 
             <div style={{ marginBottom: '1.5rem' }}>

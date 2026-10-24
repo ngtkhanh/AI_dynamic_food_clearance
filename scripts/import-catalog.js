@@ -89,12 +89,13 @@ async function importCatalog() {
           category: item.category || 'General',
           basePrice: item.basePrice,
           minPrice: item.minPrice,
+          stockQuantity: item.stockQuantity !== undefined ? item.stockQuantity : 0,
           defaultShelfHours: item.defaultShelfHours || 24,
           sampleImages: sampleImagesJson,
           visualKeywords: item.visualKeywords || null
         }
       });
-      console.log(`🔄 [Cập nhật] SKU: ${sku.padEnd(20)} | ${item.name} (${item.basePrice.toLocaleString('vi-VN')}đ -> Sàn: ${item.minPrice.toLocaleString('vi-VN')}đ)`);
+      console.log(`🔄 [Cập nhật] SKU: ${sku.padEnd(20)} | ${item.name} (${item.basePrice.toLocaleString('vi-VN')}đ | Tồn kho: ${item.stockQuantity || 0})`);
       updatedCount++;
     } else {
       await prisma.product.create({
@@ -104,6 +105,7 @@ async function importCatalog() {
           category: item.category || 'General',
           basePrice: item.basePrice,
           minPrice: item.minPrice,
+          stockQuantity: item.stockQuantity !== undefined ? item.stockQuantity : 0,
           defaultShelfHours: item.defaultShelfHours || 24,
           sampleImages: sampleImagesJson,
           visualKeywords: item.visualKeywords || null

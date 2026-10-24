@@ -16,7 +16,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { name, category, basePrice, minPrice, defaultShelfHours, sampleImages, visualKeywords } = body;
+    const { name, category, basePrice, minPrice, stockQuantity, defaultShelfHours, sampleImages, visualKeywords } = body;
 
     // Validation
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
 
     const parsedBasePrice = Number(basePrice);
     const parsedMinPrice = Number(minPrice);
+    const parsedStockQty = Math.max(0, parseInt(stockQuantity) || 0);
     const parsedShelfHours = Number(defaultShelfHours) || 24;
 
     if (isNaN(parsedBasePrice) || parsedBasePrice <= 0) {
@@ -61,6 +62,7 @@ export async function POST(req: NextRequest) {
         category: category?.trim() || 'General',
         basePrice: parsedBasePrice,
         minPrice: parsedMinPrice,
+        stockQuantity: parsedStockQty,
         defaultShelfHours: parsedShelfHours,
         sampleImages: sampleImagesStr,
         visualKeywords: visualKeywords?.trim() || null,
