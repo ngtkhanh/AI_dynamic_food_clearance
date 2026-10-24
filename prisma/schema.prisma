@@ -8,29 +8,42 @@ datasource db {
 }
 
 model Product {
-  id          Int      @id @default(autoincrement())
-  name        String
-  basePrice   Float
-  minPrice    Float
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                Int             @id @default(autoincrement())
+  sku               String?         @unique
+  name              String
+  category          String?
+  basePrice         Float
+  minPrice          Float
+  defaultShelfHours Int             @default(24)
+  sampleImages      String?         // JSON string: ["/catalog/BREAD-CROISSANT-01.jpg"]
+  visualKeywords    String?         // Gợi ý thị giác nhận diện cho AI Vision
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  clearanceItems    ClearanceItem[]
 }
 
 
 model ClearanceItem {
-  id              Int           @id @default(autoincrement())
-  name            String
-  originalPrice   Float
-  currentPrice    Float
-  initialQuantity Int
-  currentQuantity Int
-  expiresAt       DateTime
-  imageUrl        String?       // Base64 or URL
-  aiPricingStrategy String? // JSON string containing decay_schedule
-  aiRationale     String? // Explanation from AI
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-  reservations    Reservation[]
+  id                Int           @id @default(autoincrement())
+  name              String
+  originalPrice     Float
+  currentPrice      Float
+  initialQuantity   Int
+  currentQuantity   Int
+  expiresAt         DateTime
+  status            String        @default("ACTIVE") // ACTIVE, SOLD_OUT, DISCARDED
+  discardReason     String?       // Lý do hủy bỏ (HỎNG, QUÁ DATE, RƠI VỠ...)
+  imageUrl          String?       // Base64 or URL
+  aiPricingStrategy String?       // JSON string containing decay_schedule
+  aiRationale       String?       // Explanation from AI
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  
+  productId         Int?
+  product           Product?      @relation(fields: [productId], references: [id])
+  reservations      Reservation[]
+
+  @@index([status, expiresAt])
 }
 
 model Reservation {

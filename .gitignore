@@ -20,6 +20,12 @@
 # production
 /build
 
+# database (local SQLite)
+prisma/*.db
+prisma/*.db-journal
+*.sqlite
+*.sqlite3
+
 # misc
 .DS_Store
 *.pem
@@ -30,8 +36,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files (allow .env.example template)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -39,3 +46,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# AI Assistant configs & caches
+.claude/
+.cursor/
+.devin/

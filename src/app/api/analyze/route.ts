@@ -10,13 +10,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing image data' }, { status: 400 });
     }
 
-    // Lấy danh mục sản phẩm để đưa vào prompt
+    // Lấy danh mục sản phẩm (kèm visualKeywords và quy tắc giá) để đưa vào prompt
     const products = await prisma.product.findMany();
     const catalogStr = JSON.stringify(products.map(p => ({
       id: p.id,
+      sku: p.sku,
       name: p.name,
+      category: p.category,
       basePrice: p.basePrice,
-      minPrice: p.minPrice
+      minPrice: p.minPrice,
+      defaultShelfHours: p.defaultShelfHours,
+      visualKeywords: p.visualKeywords
     })));
 
     const aiResult = await analyzeImageAndGeneratePricing(imageBase64, mimeType || 'image/jpeg', catalogStr);
@@ -26,8 +30,10 @@ export async function POST(req: NextRequest) {
       const matchedProduct = products.find((p: any) => p.id === aiResult.productId);
       if (matchedProduct) {
         aiResult.item_name = matchedProduct.name;
+        aiResult.sku = matchedProduct.sku;
         aiResult.base_price = matchedProduct.basePrice;
         aiResult.min_price = matchedProduct.minPrice;
+        aiResult.default_shelf_hours = matchedProduct.defaultShelfHours;
       }
     }
 

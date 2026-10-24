@@ -1,0 +1,74 @@
+[
+  {
+    "sku": "BREAD-CROISSANT",
+    "name": "Bánh Sừng Bò (Croissant)",
+    "category": "Bakery",
+    "basePrice": 25000,
+    "minPrice": 10000,
+    "defaultShelfHours": 12,
+    "sampleImages": [
+      "/catalog/BREAD-CROISSANT-01.jpg"
+    ],
+    "visualKeywords": "bánh sừng bò, croissant, màu vàng nâu óng ả, hình bán nguyệt vầng trăng khuyết, vỏ nhiều lớp bơ xốp giòn, có độ phồng"
+  },
+  {
+    "sku": "BREAD-BAGUETTE",
+    "name": "Bánh Mì Baguette Pháp",
+    "category": "Bakery",
+    "basePrice": 18000,
+    "minPrice": 7000,
+    "defaultShelfHours": 16,
+    "sampleImages": [
+      "/catalog/BREAD-BAGUETTE-01.jpg"
+    ],
+    "visualKeywords": "bánh mì que baguette dài kiểu Pháp, vỏ giòn rụm màu vàng ngà, có các vết khía xéo đặc trưng trên sống lưng bánh"
+  },
+  {
+    "sku": "BAKERY-DONUT-CHOCO",
+    "name": "Bánh Donut Chocolate",
+    "category": "Bakery",
+    "basePrice": 22000,
+    "minPrice": 9000,
+    "defaultShelfHours": 24,
+    "sampleImages": [
+      "/catalog/BAKERY-DONUT-CHOCO-01.jpg"
+    ],
+    "visualKeywords": "bánh vòng tròn có lỗ ở giữa (donut), phủ lớp kem chocolate nâu đậm bóng bẩy ở nửa trên, có thể rắc cốm trang trí"
+  },
+  {
+    "sku": "FRUIT-MIX-CUP",
+    "name": "Hộp Trái Cây Mix Tươi",
+    "category": "Fresh Produce",
+    "basePrice": 38000,
+    "minPrice": 15000,
+    "defaultShelfHours": 8,
+    "sampleImages": [
+      "/catalog/FRUIT-MIX-CUP-01.jpg"
+    ],
+    "visualKeywords": "hộp nhựa trong suốt chứa các loại trái cây tươi cắt miếng tổng hợp: dưa hấu đỏ, dưa lưới vàng cam, thanh long, nho xanh"
+  },
+  {
+    "sku": "SALAD-VEGGIE-EGG",
+    "name": "Salad Rau Củ Trứng Luộc",
+    "category": "Ready-to-eat",
+    "basePrice": 42000,
+    "minPrice": 18000,
+    "defaultShelfHours": 6,
+    "sampleImages": [
+      "/catalog/SALAD-VEGGIE-EGG-01.jpg"
+    ],
+    "visualKeywords": "hộp thức ăn đóng gói trong suốt, nền rau xà lách xanh, cà chua bi tròn đỏ mọng, trứng luộc cắt đôi thấy rõ lòng đỏ"
+  },
+  {
+    "sku": "DRINK-COLD-BREW",
+    "name": "Cà Phê Cold Brew Chai",
+    "category": "Beverages",
+    "basePrice": 35000,
+    "minPrice": 15000,
+    "defaultShelfHours": 48,
+    "sampleImages": [
+      "/catalog/DRINK-COLD-BREW-01.jpg"
+    ],
+    "visualKeywords": "chai thủy tinh hình trụ nắp nhôm hoặc nắp bần chứa nước cà phê ủ lạnh màu nâu sẫm, có dán nhãn giấy thủ công"
+  }
+]
